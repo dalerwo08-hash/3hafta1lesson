@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 import '../App.css'
-import { deleteTodo, getTodo } from '../api/api'
+import { addTodo, deleteTodo, getTodo, toggleTodoCompleted, updateTodo, type Todo } from '../api/api'
 import { queryClient } from '../lib/queryclient'
 
 const CalendarIcon = () => (
@@ -22,10 +23,34 @@ const TrashIcon = () => (
   </svg>
 )
 
+const SearchIcon = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <circle cx="10.5" cy="10.5" r="5.5" />
+    <path d="m15 15 4.5 4.5" />
+  </svg>
+)
+
+const PlusIcon = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+)
+
+const EditIcon = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M13.5 6.5 17.5 10.5M4 20l4.5-1 9.8-9.8a2.1 2.1 0 0 0-3-3L5.5 16 4 20Z" />
+  </svg>
+)
+
 const Home = () => {
+  const [search, setSearch] = useState('')
+  const [newTodo, setNewTodo] = useState('')
+  const [editingTodo, setEditingTodo] = useState<Todo | null>(null)
+  const [editName, setEditName] = useState('')
+
   const { data, isPending, isError, error } = useQuery({
-    queryKey: ['todos'],
-    queryFn: getTodo,
+    queryKey: ['todos', search],
+    queryFn: () => getTodo(search),
   })
 
   const deleteMutation = useMutation({
@@ -34,6 +59,50 @@ const Home = () => {
       await queryClient.invalidateQueries({ queryKey: ['todos'] })
     },
   })
+
+  const addMutation = useMutation({
+    mutationFn: addTodo,
+    onSuccess: async () => {
+      setNewTodo('')
+      await queryClient.invalidateQueries({ queryKey: ['todos'] })
+    },
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, name }: { id: Todo['id']; name: string }) =>
+      updateTodo(id, name, editName),
+    onSuccess: async () => {
+      setEditingTodo(null)
+      setEditName('')
+      await queryClient.invalidateQueries({ queryKey: ['todos'] })
+    },
+  })
+
+  const toggleMutation = useMutation({
+    mutationFn: toggleTodoCompleted,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['todos'] })
+    },
+  })
+
+  const startEditing = (todo: Todo) => {
+    setEditingTodo(todo)
+    setEditName(todo.name)
+  }
+
+  const submitTodo = (event: React.FormEvent) => {
+    event.preventDefault()
+    const name = newTodo.trim()
+    if (name) addMutation.mutate(name)
+  }
+
+  const submitEdit = (event: React.FormEvent) => {
+    event.preventDefault()
+    const name = editName.trim()
+    if (editingTodo && name) {
+      updateMutation.mutate({ id: editingTodo.id, name })
+    }
+  }
 
   const date = new Intl.DateTimeFormat('tg-TJ', {
     weekday: 'long',
@@ -127,6 +196,37 @@ const Home = () => {
               )}
             </div>
 
+            <div className="todo-toolbar">
+              <form className="add-form" onSubmit={submitTodo}>
+                <label className="sr-only" htmlFor="new-todo">Вазифаи нав</label>
+                <input
+                  id="new-todo"
+                  value={newTodo}
+                  onChange={(event) => setNewTodo(event.target.value)}
+                  placeholder="Вазифаи нав..."
+                  maxLength={100}
+                />
+                <button type="submit" disabled={!newTodo.trim() || addMutation.isPending}>
+                  <PlusIcon />
+                  <span>{addMutation.isPending ? 'Илова шуда истодааст...' : 'Илова кардан'}</span>
+                </button>
+              </form>
+              <label className="search-box">
+                <SearchIcon />
+                <span className="sr-only">Ҷустуҷӯи вазифаҳо</span>
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Ҷустуҷӯ..."
+                />
+              </label>
+            </div>
+            {(addMutation.isError || updateMutation.isError || toggleMutation.isError) && (
+              <p className="mutation-error" role="alert">
+                Хато: {addMutation.error?.message || updateMutation.error?.message || toggleMutation.error?.message}
+              </p>
+            )}
+
             <div className="tasks-card">
               {isPending ? (
                 <div className="loading-state" role="status">
@@ -146,32 +246,98 @@ const Home = () => {
                   <p>Вақти хубест, ки каме истироҳат кунед.</p>
                 </div>
               ) : (
-                <ul className="task-list">
-                  {data.data.map((todo, index) => (
-                    <li className="task-item" key={todo.id}>
-                      <span className="task-marker" aria-hidden="true">
-                        {String(index + 1).padStart(2, '0')}
-                      </span>
-                      <span className="task-name">{todo.name}</span>
-                      <button
-                        className="delete-button"
-                        type="button"
-                        aria-label={`Нест кардани вазифа: ${todo.name}`}
-                        onClick={() => deleteMutation.mutate(todo.id)}
-                        disabled={deleteMutation.isPending}
-                      >
-                        {deleteMutation.isPending && deleteMutation.variables === todo.id
-                          ? <span className="button-spinner" />
-                          : <TrashIcon />}
-                        <span className="delete-label">
-                          {deleteMutation.isPending && deleteMutation.variables === todo.id
-                            ? 'Нест шуда истодааст...'
-                            : 'Нест кардан'}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                <div className="table-wrap">
+                  <table className="todo-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">№</th>
+                        <th scope="col">Вазифа</th>
+                        <th scope="col" className="status-column">Ҳолат</th>
+                        <th scope="col" className="actions-column">Амалҳо</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.data.map((todo, index) => (
+                        <tr key={todo.id}>
+                          <td className="table-index">
+                            <span className="task-marker" aria-hidden="true">
+                              {String(index + 1).padStart(2, '0')}
+                            </span>
+                          </td>
+                          <td className="table-name">
+                            {editingTodo?.id === todo.id ? (
+                              <form className="edit-form" onSubmit={submitEdit}>
+                                <label className="sr-only" htmlFor={`edit-${todo.id}`}>Таҳрири вазифа</label>
+                                <input
+                                  id={`edit-${todo.id}`}
+                                  value={editName}
+                                  onChange={(event) => setEditName(event.target.value)}
+                                  maxLength={100}
+                                  autoFocus
+                                />
+                                <button type="submit" disabled={!editName.trim() || updateMutation.isPending}>
+                                  Захира
+                                </button>
+                                <button type="button" onClick={() => setEditingTodo(null)}>Бекор</button>
+                              </form>
+                            ) : (
+                              <span className="task-name">{todo.name}</span>
+                            )}
+                          </td>
+                          <td className="table-status">
+                            <span className={`status-badge ${todo.isCompleted ? 'status-completed' : 'status-pending'}`}>
+                              <span className="status-dot" aria-hidden="true" />
+                              {todo.isCompleted ? 'Иҷро шуд' : 'Дар ҷараён'}
+                            </span>
+                          </td>
+                          <td className="table-actions">
+                            {editingTodo?.id !== todo.id && (
+                              <button
+                                className="edit-button"
+                                type="button"
+                                aria-label={`Таҳрир кардани вазифа: ${todo.name}`}
+                                onClick={() => startEditing(todo)}
+                              >
+                                <EditIcon />
+                                <span>Таҳрир</span>
+                              </button>
+                            )}
+                            <button
+                              className="toggle-button"
+                              type="button"
+                              aria-label={todo.isCompleted
+                                ? `Баргардонидани вазифа ба ҷараён: ${todo.name}`
+                                : `Иҷро кардани вазифа: ${todo.name}`}
+                              onClick={() => toggleMutation.mutate(todo.id)}
+                              disabled={toggleMutation.isPending}
+                            >
+                              {toggleMutation.isPending && toggleMutation.variables === todo.id
+                                ? <span className="button-spinner" />
+                                : <CheckIcon />}
+                              <span>{todo.isCompleted ? 'Иваз кардан' : 'Иҷро кардан'}</span>
+                            </button>
+                            <button
+                              className="delete-button"
+                              type="button"
+                              aria-label={`Нест кардани вазифа: ${todo.name}`}
+                              onClick={() => deleteMutation.mutate(todo.id)}
+                              disabled={deleteMutation.isPending}
+                            >
+                              {deleteMutation.isPending && deleteMutation.variables === todo.id
+                                ? <span className="button-spinner" />
+                                : <TrashIcon />}
+                              <span className="delete-label">
+                                {deleteMutation.isPending && deleteMutation.variables === todo.id
+                                  ? 'Нест шуда истодааст...'
+                                  : 'Нест кардан'}
+                              </span>
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
               {deleteMutation.isError && (
                 <p className="mutation-error" role="alert">
